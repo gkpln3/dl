@@ -36,7 +36,7 @@ jobs:
           key: ${{ matrix.target }}
 
       - name: Build release binary
-        run: cargo build --release --bin dl --package dl-cli --target ${{ matrix.target }}
+        run: cargo build --release --bin dl --package dl --target ${{ matrix.target }}
 
       - name: Package binary
         run: |
