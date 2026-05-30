@@ -116,13 +116,18 @@ pub async fn download_http(
 
     if use_parallel && options.resume {
         if let Ok(metadata) = fs::metadata(&download_path).await {
-            if metadata.len() > 0 {
-                // If the file exists and has size > 0, check if we have parallel state.
-                // If not, it means the download was running as single-stream, so we should
-                // continue as single-stream to avoid truncating existing progress.
-                if let Ok(None) = read_inline_state(&download_path).await {
-                    use_parallel = false;
-                    tracing::info!("Found single-stream download in progress; continuing with single-stream");
+            let file_len = metadata.len();
+            if file_len > 0 {
+                if let Some(total_size) = probe.total_size {
+                    if file_len < total_size {
+                        // If the file exists and has size > 0 and is less than the total size, check if we have parallel state.
+                        // If not, it means the download was running as single-stream, so we should
+                        // continue as single-stream to avoid truncating existing progress.
+                        if let Ok(None) = read_inline_state(&download_path).await {
+                            use_parallel = false;
+                            tracing::info!("Found single-stream download in progress; continuing with single-stream");
+                        }
+                    }
                 }
             }
         }
@@ -331,18 +336,40 @@ async fn download_parallel(
         workers.spawn(async move { run_worker(worker_id, worker_context).await });
     }
 
-    while let Some(result) = workers.join_next().await {
-        match result {
-            Ok(Ok(())) => {}
-            Ok(Err(error)) => {
-                workers.abort_all();
-                return Err(error);
+    let mut ctrl_c_hit = false;
+    loop {
+        tokio::select! {
+            result = workers.join_next() => {
+                let Some(result) = result else {
+                    break;
+                };
+                match result {
+                    Ok(Ok(())) => {}
+                    Ok(Err(error)) => {
+                        workers.abort_all();
+                        return Err(error);
+                    }
+                    Err(error) => {
+                        workers.abort_all();
+                        return Err(error.into());
+                    }
+                }
             }
-            Err(error) => {
+            _ = tokio::signal::ctrl_c() => {
+                tracing::info!("Ctrl+C detected, shutting down workers and flushing state...");
+                ctrl_c_hit = true;
                 workers.abort_all();
-                return Err(error.into());
+                break;
             }
         }
+    }
+
+    if ctrl_c_hit {
+        let _ = persist_worker_state(&context, true).await;
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Interrupted,
+            "Download interrupted by user (Ctrl+C)"
+        ).into());
     }
 
     emit_progress(
@@ -742,33 +769,53 @@ async fn download_single_stream(
     let mut last_emitted_time = Instant::now();
     let mut chunk_counter = 0_u32;
 
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk?;
-        file.write_all(&chunk).await?;
-        downloaded += chunk.len() as u64;
+    let mut ctrl_c_hit = false;
+    loop {
+        tokio::select! {
+            chunk_res = stream.next() => {
+                let Some(chunk) = chunk_res else {
+                    break;
+                };
+                let chunk = chunk?;
+                file.write_all(&chunk).await?;
+                downloaded += chunk.len() as u64;
 
-        chunk_counter += 1;
-        if chunk_counter % 32 == 0 {
-            let now = Instant::now();
-            if now.duration_since(last_emitted_time) >= Duration::from_millis(100) {
-                last_emitted_time = now;
-                emit_progress(
-                    &options.progress,
-                    DownloadPhase::Downloading,
-                    &url,
-                    &output_path,
-                    downloaded,
-                    total_size,
-                    1,
-                    None,
-                    None,
-                );
+                chunk_counter += 1;
+                if chunk_counter % 32 == 0 {
+                    let now = Instant::now();
+                    if now.duration_since(last_emitted_time) >= Duration::from_millis(100) {
+                        last_emitted_time = now;
+                        emit_progress(
+                            &options.progress,
+                            DownloadPhase::Downloading,
+                            &url,
+                            &output_path,
+                            downloaded,
+                            total_size,
+                            1,
+                            None,
+                            None,
+                        );
+                    }
+                }
+            }
+            _ = tokio::signal::ctrl_c() => {
+                tracing::info!("Ctrl+C detected, flushing file and shutting down...");
+                ctrl_c_hit = true;
+                break;
             }
         }
     }
 
     file.flush().await?;
     file.get_ref().sync_data().await?;
+
+    if ctrl_c_hit {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Interrupted,
+            "Download interrupted by user (Ctrl+C)"
+        ).into());
+    }
 
     emit_progress(
         &options.progress,
@@ -989,15 +1036,15 @@ fn calculate_dynamic_chunk_size(total_size: u64, connections: usize) -> u64 {
     // For smaller files, we keep chunk sizes small to allow faster start and fine-grained updates.
     // For large files, we use very large chunk sizes to minimize connection/HTTP overhead and maintain maximum TCP speed.
     let (min_chunk_size, max_chunk_size) = if total_size < 10 * 1024 * 1024 {
-        (1 * 1024 * 1024, 5 * 1024 * 1024) // < 10MB -> 1MB to 5MB chunks
+        (512 * 1024, 2 * 1024 * 1024) // < 10MB -> 512KB to 2MB chunks
     } else if total_size < 100 * 1024 * 1024 {
-        (4 * 1024 * 1024, 25 * 1024 * 1024) // 10MB - 100MB -> 4MB to 25MB chunks
+        (1 * 1024 * 1024, 8 * 1024 * 1024) // 10MB - 100MB -> 1MB to 8MB chunks
     } else if total_size < 1 * 1024 * 1024 * 1024 {
-        (16 * 1024 * 1024, 128 * 1024 * 1024) // 100MB - 1GB -> 16MB to 128MB chunks
+        (4 * 1024 * 1024, 16 * 1024 * 1024) // 100MB - 1GB -> 4MB to 16MB chunks
     } else if total_size < 10 * 1024 * 1024 * 1024 {
-        (64 * 1024 * 1024, 512 * 1024 * 1024) // 1GB - 10GB -> 64MB to 512MB chunks
+        (8 * 1024 * 1024, 32 * 1024 * 1024) // 1GB - 10GB -> 8MB to 32MB chunks
     } else {
-        (256 * 1024 * 1024, 1 * 1024 * 1024 * 1024) // >= 10GB -> 256MB to 1GB chunks
+        (16 * 1024 * 1024, 64 * 1024 * 1024) // >= 10GB -> 16MB to 64MB chunks
     };
 
     // Target 2 chunks per connection. This ensures very long-lived TCP streams
@@ -1268,6 +1315,62 @@ mod tests {
         let _ = shutdown.send(());
     }
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn resumes_from_pre_allocated_parallel_file_without_state() {
+        let data: Vec<u8> = (0..128_u32)
+            .flat_map(|value| value.to_be_bytes())
+            .cycle()
+            .take(5 * 1024 * 1024)
+            .collect();
+        let (base_url, shutdown) = spawn_range_server(data.clone()).await;
+        let dir = tempdir().unwrap();
+        let output = dir.path().join("pre_allocated.bin");
+        let output_dl = dir.path().join("pre_allocated.bin.dl");
+
+        // Simulate an interrupted parallel download that pre-allocated the file
+        // but got interrupted before any metadata was written.
+        let file = tokio::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .open(&output_dl)
+            .await
+            .unwrap();
+        file.set_len(data.len() as u64).await.unwrap();
+        drop(file);
+
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+
+        let summary = download_http(
+            format!("{base_url}/pre_allocated.bin"),
+            &output,
+            DownloadOptions {
+                connections: 4,
+                chunk_size: 128 * 1024,
+                overwrite: true,
+                resume: true,
+                progress: Some(tx),
+                ..DownloadOptions::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(summary.total_bytes, data.len() as u64);
+        assert_eq!(fs::read(&output).await.unwrap(), data);
+        assert!(!output_dl.exists());
+
+        // Verify that it actually used multiple workers (parallel download) and didn't fall back to single-stream
+        let mut saw_parallel = false;
+        while let Ok(progress) = rx.try_recv() {
+            if progress.active_workers > 1 {
+                saw_parallel = true;
+            }
+        }
+        assert!(saw_parallel, "Should have run parallel download with multiple workers");
+
+        let _ = shutdown.send(());
+    }
+
     async fn spawn_range_server(data: Vec<u8>) -> (String, oneshot::Sender<()>) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
@@ -1408,21 +1511,21 @@ mod tests {
     #[test]
     fn test_calculate_dynamic_chunk_size() {
         // Test very small files (< 10MB)
-        assert_eq!(calculate_dynamic_chunk_size(4 * 1024 * 1024, 8), 1 * 1024 * 1024); // 4MB / 16 = 256KB -> capped at min 1MB
+        assert_eq!(calculate_dynamic_chunk_size(4 * 1024 * 1024, 8), 512 * 1024); // 4MB / 16 = 256KB -> capped at min 512KB
         assert_eq!(calculate_dynamic_chunk_size(4 * 1024 * 1024, 1), 2 * 1024 * 1024); // 4MB / 2 = 2MB
 
         // Test small-to-medium files (10MB - 100MB)
-        assert_eq!(calculate_dynamic_chunk_size(40 * 1024 * 1024, 8), 4 * 1024 * 1024); // 40MB / 16 = 2.5MB -> capped at min 4MB
-        assert_eq!(calculate_dynamic_chunk_size(80 * 1024 * 1024, 4), 10 * 1024 * 1024); // 80MB / 8 = 10MB
+        assert_eq!(calculate_dynamic_chunk_size(40 * 1024 * 1024, 8), (2.5 * 1024.0 * 1024.0) as u64); // 40MB / 16 = 2.5MB
+        assert_eq!(calculate_dynamic_chunk_size(80 * 1024 * 1024, 4), 8 * 1024 * 1024); // 80MB / 8 = 10MB -> capped at max 8MB
 
         // Test medium files (100MB - 1GB)
-        assert_eq!(calculate_dynamic_chunk_size(500 * 1024 * 1024, 8), 32000 * 1024); // 500MB / 16 = 31.25MB (which is 32000 KiB)
+        assert_eq!(calculate_dynamic_chunk_size(500 * 1024 * 1024, 8), 16 * 1024 * 1024); // 500MB / 16 = 31.25MB -> capped at max 16MB
 
         // Test large files (1GB - 10GB)
-        assert_eq!(calculate_dynamic_chunk_size(4 * 1024 * 1024 * 1024, 8), 256 * 1024 * 1024); // 4GB / 16 = 256MB
+        assert_eq!(calculate_dynamic_chunk_size(4 * 1024 * 1024 * 1024, 8), 32 * 1024 * 1024); // 4GB / 16 = 256MB -> capped at max 32MB
 
         // Test very large files (>= 10GB)
-        assert_eq!(calculate_dynamic_chunk_size(10 * 1024 * 1024 * 1024, 8), 640 * 1024 * 1024); // 10GB / 16 = 640MB
-        assert_eq!(calculate_dynamic_chunk_size(20 * 1024 * 1024 * 1024, 8), 1 * 1024 * 1024 * 1024); // 20GB / 16 = 1.25GB -> capped at max 1GB
+        assert_eq!(calculate_dynamic_chunk_size(10 * 1024 * 1024 * 1024, 8), 64 * 1024 * 1024); // 10GB / 16 = 625MB -> capped at max 64MB
+        assert_eq!(calculate_dynamic_chunk_size(20 * 1024 * 1024 * 1024, 8), 64 * 1024 * 1024); // 20GB / 16 = 1.25GB -> capped at max 64MB
     }
 }

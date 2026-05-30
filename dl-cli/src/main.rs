@@ -276,6 +276,12 @@ async fn render_progress(mut progress_rx: libdl::ProgressReceiver) {
     );
     status.set_style(ProgressStyle::with_template("{msg}").unwrap());
 
+    let mut last_update = Instant::now();
+    let mut latest_progress: Option<DownloadProgress> = None;
+    let mut needs_render = false;
+    let mut last_phase = None;
+    const UI_UPDATE_INTERVAL: Duration = Duration::from_millis(200);
+
     while let Some(progress) = progress_rx.recv().await {
         if progress.phase == DownloadPhase::Downloading {
             let initial = progress.downloaded_bytes;
@@ -285,12 +291,36 @@ async fn render_progress(mut progress_rx: libdl::ProgressReceiver) {
             t.add_sample(progress.downloaded_bytes);
         }
 
-        update_overall(&overall, &progress);
-        status.set_message(status_message(&progress));
+        let is_complete = progress.phase == DownloadPhase::Complete;
+        let phase_changed = last_phase.as_ref() != Some(&progress.phase);
+        last_phase = Some(progress.phase.clone());
+        latest_progress = Some(progress);
+        needs_render = true;
 
-        if progress.phase == DownloadPhase::Complete {
-            overall.finish();
-            status.finish_and_clear();
+        let now = Instant::now();
+        if is_complete || phase_changed || now.duration_since(last_update) >= UI_UPDATE_INTERVAL {
+            if let Some(ref p) = latest_progress {
+                update_overall(&overall, p);
+                status.set_message(status_message(p));
+                needs_render = false;
+                last_update = now;
+
+                if is_complete {
+                    overall.finish();
+                    status.finish_and_clear();
+                }
+            }
+        }
+    }
+
+    if needs_render {
+        if let Some(ref p) = latest_progress {
+            update_overall(&overall, p);
+            status.set_message(status_message(p));
+            if p.phase == DownloadPhase::Complete {
+                overall.finish();
+                status.finish_and_clear();
+            }
         }
     }
 
