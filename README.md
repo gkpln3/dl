@@ -1,4 +1,4 @@
-# dl 🚀 — A blazing-fast download accelerator CLI tool supporting multi-threaded HTTP/S streams and BitTorrent
+# dl - A fast CLI download accelerator with torrent support
 
 [![Release and Brew Publish](https://github.com/gkpln3/dl/actions/workflows/release.yml/badge.svg)](https://github.com/gkpln3/dl/actions/workflows/release.yml)
 [![Homebrew Formula](https://img.shields.io/homebrew/v/dl?color=blue&logo=homebrew)](https://formulae.brew.sh/formula/dl)
