@@ -1,7 +1,7 @@
 # dl - A fast lightweight CLI downloader and accelerator with torrent support
 
-![Release](https://img.shields.io/github/v/release/gkpln3/dl)
-![Build](https://img.shields.io/github/check-runs/gkpln3/dl/main?label=build)
+[![Release](https://img.shields.io/github/v/release/gkpln3/dl)](https://github.com/gkpln3/dl/releases)
+[![Build](https://img.shields.io/github/check-runs/gkpln3/dl/main?label=build)](https://github.com/gkpln3/dl/actions/workflows/release.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 A lightweight, high-performance CLI downloader and accelerator written in Rust. `dl` speeds up downloads by utilizing multiple concurrent connections for HTTP streams and supports downloading directly from BitTorrent (including magnet links and `.torrent` files) with an interactive file selector.
