@@ -1,5 +1,9 @@
 # dl 🚀 — A blazing-fast download accelerator CLI tool supporting multi-threaded HTTP/S streams and BitTorrent
 
+[![Release and Brew Publish](https://github.com/gkpln3/dl/actions/workflows/release.yml/badge.svg)](https://github.com/gkpln3/dl/actions/workflows/release.yml)
+[![Homebrew Formula](https://img.shields.io/homebrew/v/dl?color=blue&logo=homebrew)](https://formulae.brew.sh/formula/dl)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 A lightweight, high-performance, and feature-rich CLI download manager and accelerator written in Rust. `dl` speeds up downloads by utilizing multiple concurrent connections for HTTP streams and supports downloading directly from BitTorrent (including magnet links and `.torrent` files) with an interactive file selector.
 
 
