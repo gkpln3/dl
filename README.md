@@ -16,19 +16,6 @@ A lightweight, high-performance, and feature-rich CLI download manager and accel
 - **⏯️ Resumable Streams**: Automatically saves transfer state so you can pause and resume downloads without losing progress.
 
 
-## Performance Comparison ⚡
-
-To put `dl`'s multi-threaded acceleration into perspective, here is a relative speed comparison of downloading a large file (Ubuntu 26.04 Desktop ISO) using **wget** (single-threaded), [**pget**](https://github.com/Code-Hex/pget) (multi-threaded concurrent downloader), and **dl** (this utility):
-
-| Utility | Connection Model | Relative Speed (Higher is Better) | Performance Gain vs Wget |
-| :--- | :--- | :---: | :---: |
-| **wget** | Single-threaded | **100%** (22.4 MiB/s) | Baseline |
-| [**pget**](https://github.com/Code-Hex/pget) | Concurrent | **54%** (12.1 MiB/s) | -46% (Slower) |
-| **dl** | **Concurrent Chunked / Range-based** | **133%** (29.8 MiB/s) | **+33% (Faster)** |
-
-`dl`'s range-based concurrent request scheduling optimizes bandwidth utilization, letting you pull down assets substantially faster than traditional single-threaded utilities or poorly-optimized concurrent utilities.
-
-
 ## Installation
 
 ### Homebrew (Recommended for macOS and Linux)
@@ -61,6 +48,19 @@ cargo install --path dl-cli
 ```
 
 This compiles `dl` in release mode and installs the executable directly to your local Cargo bin directory (usually `~/.cargo/bin`). Make sure this directory is in your shell's `PATH` to run `dl` from anywhere!
+
+
+## Performance Comparison ⚡
+
+To put `dl`'s multi-threaded acceleration into perspective, here is a relative speed comparison of downloading a large file (Ubuntu 26.04 Desktop ISO) using **wget** (single-threaded), [**pget**](https://github.com/Code-Hex/pget) (multi-threaded concurrent downloader), and **dl** (this utility):
+
+| Utility | Connection Model | Relative Speed (Higher is Better) | Performance Gain vs Wget |
+| :--- | :--- | :---: | :---: |
+| **wget** | Single-threaded | **100%** (22.4 MiB/s) | Baseline |
+| [**pget**](https://github.com/Code-Hex/pget) | Concurrent | **54%** (12.1 MiB/s) | -46% (Slower) |
+| **dl** | **Concurrent Chunked / Range-based** | **133%** (29.8 MiB/s) | **+33% (Faster)** |
+
+`dl`'s range-based concurrent request scheduling optimizes bandwidth utilization, letting you pull down assets substantially faster than traditional single-threaded utilities or poorly-optimized concurrent utilities.
 
 
 ## Usage
@@ -97,7 +97,6 @@ dl "magnet:?xt=urn:btih:..."
 ```bash
 dl ./ubuntu-desktop.torrent
 ```
-
 
 ## License
 
