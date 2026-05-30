@@ -1,0 +1,24 @@
+[workspace]
+members = ["libdl", "dl-cli"]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/gkpln3/dl"
+rust-version = "1.89"
+
+[workspace.dependencies]
+bytes = "1"
+clap = { version = "4", features = ["derive"] }
+futures-util = "0.3"
+indicatif = "0.17"
+librqbit = "8.1.1"
+reqwest = { version = "0.12", default-features = false, features = ["http2", "rustls-tls", "stream"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tempfile = "3"
+thiserror = "2"
+tokio = { version = "1", features = ["fs", "io-util", "macros", "rt-multi-thread", "signal", "sync", "time"] }
+tracing = "0.1"
+url = "2"

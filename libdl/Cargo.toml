@@ -1,0 +1,27 @@
+[package]
+name = "libdl"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[features]
+default = ["torrent"]
+torrent = ["dep:bytes", "dep:librqbit"]
+
+[dependencies]
+bytes = { workspace = true, optional = true }
+futures-util.workspace = true
+librqbit = { workspace = true, optional = true }
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio.workspace = true

@@ -1,0 +1,153 @@
+name: Release and Brew Publish
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build - ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: macos-latest
+            target: x86_64-apple-darwin
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Build release binary
+        run: cargo build --release --bin dl --package dl-cli --target ${{ matrix.target }}
+
+      - name: Package binary
+        run: |
+          cd target/${{ matrix.target }}/release
+          tar -czf ../../../dl-${{ matrix.target }}.tar.gz dl
+          cd ../../..
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dl-${{ matrix.target }}
+          path: dl-${{ matrix.target }}.tar.gz
+          retention-days: 1
+
+  publish:
+    name: Publish Release & Update Brew Formula
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare assets
+        run: |
+          mkdir -p release-assets
+          TAG_NAME="${{ github.ref_name }}"
+          VERSION="${TAG_NAME#v}"
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          
+          # Move and rename the archives to include version tags
+          mv artifacts/dl-aarch64-apple-darwin/dl-aarch64-apple-darwin.tar.gz release-assets/dl-$TAG_NAME-aarch64-apple-darwin.tar.gz
+          mv artifacts/dl-x86_64-apple-darwin/dl-x86_64-apple-darwin.tar.gz release-assets/dl-$TAG_NAME-x86_64-apple-darwin.tar.gz
+          mv artifacts/dl-x86_64-unknown-linux-gnu/dl-x86_64-unknown-linux-gnu.tar.gz release-assets/dl-$TAG_NAME-x86_64-unknown-linux-gnu.tar.gz
+          
+          # Compute SHA256 hashes for use in the Homebrew formula
+          echo "SHA_ARM64_MAC=$(sha256sum release-assets/dl-$TAG_NAME-aarch64-apple-darwin.tar.gz | cut -d' ' -f1)" >> $GITHUB_ENV
+          echo "SHA_AMD64_MAC=$(sha256sum release-assets/dl-$TAG_NAME-x86_64-apple-darwin.tar.gz | cut -d' ' -f1)" >> $GITHUB_ENV
+          echo "SHA_AMD64_LINUX=$(sha256sum release-assets/dl-$TAG_NAME-x86_64-unknown-linux-gnu.tar.gz | cut -d' ' -f1)" >> $GITHUB_ENV
+
+      - name: Create GitHub Release
+        id: create_release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-assets/*
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update Homebrew Tap Formula
+        env:
+          TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          FORMULA_CONTENT: |
+            class Dl < Formula
+              desc "A blazing-fast download accelerator CLI tool supporting multi-threaded HTTP/S streams and BitTorrent"
+              homepage "https://github.com/${{ github.repository }}"
+              version "${{ env.VERSION }}"
+              license "MIT"
+
+              if OS.mac?
+                if Hardware::CPU.arm?
+                  url "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/dl-${{ github.ref_name }}-aarch64-apple-darwin.tar.gz"
+                  sha256 "${{ env.SHA_ARM64_MAC }}"
+                else
+                  url "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/dl-${{ github.ref_name }}-x86_64-apple-darwin.tar.gz"
+                  sha256 "${{ env.SHA_AMD64_MAC }}"
+                end
+              elsif OS.linux?
+                url "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/dl-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz"
+                sha256 "${{ env.SHA_AMD64_LINUX }}"
+              end
+
+              def install
+                bin.install "dl"
+              end
+
+              test do
+                system "#{bin}/dl", "--version"
+              end
+            end
+        run: |
+          if [ -z "$TAP_GITHUB_TOKEN" ]; then
+            echo "::warning:: HOMEBREW_TAP_TOKEN secret is not set. Skipping Homebrew tap update."
+            echo "To enable automated updates, please create a Personal Access Token (classic with 'repo' scope,"
+            echo "or fine-grained with read/write access to your 'homebrew-tap' repository) and save it as"
+            echo "a repository action secret named 'HOMEBREW_TAP_TOKEN' in this repo."
+            exit 0
+          fi
+          
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # Clone the user's homebrew tap repository
+          if ! git clone https://x-access-token:${TAP_GITHUB_TOKEN}@github.com/${{ github.repository_owner }}/homebrew-tap.git homebrew-tap; then
+            echo "::error:: Failed to clone repository github.com/${{ github.repository_owner }}/homebrew-tap."
+            echo "Make sure the repository 'homebrew-tap' exists under your account."
+            exit 1
+          fi
+          
+          cd homebrew-tap
+          mkdir -p Formula
+          
+          # Write the dynamically updated Homebrew Formula
+          echo "$FORMULA_CONTENT" > Formula/dl.rb
+          
+          # Commit and push formula updates
+          git add Formula/dl.rb
+          git commit -m "Update dl formula to version ${{ github.ref_name }}"
+          git push origin main || git push origin master

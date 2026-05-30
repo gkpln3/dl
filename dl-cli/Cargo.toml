@@ -1,0 +1,19 @@
+[package]
+name = "dl"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "dl"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+dialoguer = "0.11"
+indicatif.workspace = true
+libdl = { path = "../libdl" }
+tokio.workspace = true
+url.workspace = true
