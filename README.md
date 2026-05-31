@@ -1,10 +1,10 @@
-# dl - A fast lightweight CLI downloader and accelerator with torrent support
+# dl ⚡ - A fast lightweight CLI downloader and accelerator
 
 [![Release](https://img.shields.io/github/v/release/gkpln3/dl)](https://github.com/gkpln3/dl/releases)
 [![Build](https://img.shields.io/github/check-runs/gkpln3/dl/main?label=build)](https://github.com/gkpln3/dl/actions/workflows/release.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A lightweight, high-performance CLI downloader and accelerator written in Rust. `dl` speeds up downloads by utilizing multiple concurrent connections for HTTP streams and supports downloading directly from BitTorrent (including magnet links and `.torrent` files) with an interactive file selector.
+A modern, lightweight, high-performance CLI downloader and accelerator written in Rust. `dl` speeds up downloads by utilizing multiple concurrent connections for HTTP streams and supports downloading directly from BitTorrent (including magnet links and `.torrent` files) with an interactive file selector.
 
 
 ## Features
@@ -54,32 +54,33 @@ This compiles `dl` in release mode and installs the executable directly to your 
 ## Performance Comparison ⚡
 
 ### Benchmark Results: Ubuntu 26.04 Desktop ISO (6.5 GB)
-File Size: 6.07 GiB
 
-URL: https://releases.ubuntu.com/26.04/ubuntu-26.04-desktop-amd64.iso
+| File Size | Duration | URL |
+| --------- | -------- | --- |
+| 6.07 GiB  | 60 seconds | [ubuntu-26.04-desktop-amd64.iso](https://releases.ubuntu.com/26.04/ubuntu-26.04-desktop-amd64.iso) |
 
-| Downloader       | Connections | Downloaded | Duration | Avg Speed   | Relative Speed | Performance Gain    |
-| ---------------- | :---------: | :--------: | :------: | :---------: | :------------: | :-----------------: |
-| **wget**         | 1           | 974.19 MiB | 60.1s    | 16.21 MiB/s | 100.0%         | Baseline            |
-| **axel**         | 8           | 1.09 GiB   | 60.0s    | 18.64 MiB/s | 115.0%         | **+15.0% (1.15x)**  |
-| **axel**         | 16          | 1.46 GiB   | 60.0s    | 24.85 MiB/s | 153.3%         | **+53.3% (1.53x)**  |
-| **dl**           | 8           | 1.75 GiB   | 60.1s    | 29.84 MiB/s | 184.0%         | **+84.0% (1.84x)**  |
-| **dl**           | 16          | 2.69 GiB   | 60.1s    | 45.86 MiB/s | 282.9%         | **+182.9% (2.83x)** |
-| **dl (dynamic)** | Auto        | 1.69 GiB   | 60.0s    | 28.83 MiB/s | 177.8%         | **+77.8% (1.78x)**  |
+| Downloader       | Connections | Downloaded | Avg Speed   | Performance Gain    |
+| ---------------- | :---------: | :--------: | :---------: | :-----------------: |
+| wget         | 1           | 974.19 MiB | 16.21 MiB/s | Baseline            |
+| axel         | 8           | 1.09 GiB   | 18.64 MiB/s | +15.0% (1.15x)  |
+| axel         | 16          | 1.46 GiB   | 24.85 MiB/s | +53.3% (1.53x)  |
+| dl           | 8           | 1.75 GiB   | 29.84 MiB/s | +84.0% (1.84x)  |
+| **dl**           | **16**          | **2.69 GiB**   | **45.86 MiB/s** | **+182.9% (2.83x)** |
+| dl (dynamic) | Auto        | 1.69 GiB   | 28.83 MiB/s | +77.8% (1.78x)  |
 
 ### Benchmark Results: iPhone 18,2 iOS 26.5 Restore IPSW (11.3 GB)
-File Size: 10.53 GiB
+| File Size | Duration | URL |
+| --------- | -------- | --- |
+| 11.3 GiB | 60 seconds | [iPhone18,2_26.5_23F77_Restore.ipsw](https://updates.cdn-apple.com/2026SpringFCS/fullrestores/122-56404/B6269659-BD71-4CB7-AF7C-F8D9C3CC6E2D/iPhone18,2_26.5_23F77_Restore.ipsw) |
 
-URL: https://updates.cdn-apple.com/2026SpringFCS/fullrestores/122-56404/B6269659-BD71-4CB7-AF7C-F8D9C3CC6E2D/iPhone18,2_26.5_23F77_Restore.ipsw
-
-| Downloader       | Connections | Downloaded | Duration | Avg Speed   | Relative Speed | Performance Gain   |
-| ---------------- | :---------: | :--------: | :------: | :---------: | :------------: | :----------------: |
-| **wget**         | 1           | 1.46 GiB   | 60.1s    | 24.93 MiB/s | 100.0%         | Baseline           |
-| **axel**         | 8           | 2.11 GiB   | 60.0s    | 35.91 MiB/s | 144.1%         | **+44.1% (1.44x)** |
-| **axel**         | 16          | 862.46 MiB | 60.0s    | 14.37 MiB/s | 57.6%          | -42.4% (0.58x)     |
-| **dl**           | 8           | 2.65 GiB   | 60.1s    | 45.16 MiB/s | 181.2%         | **+81.2% (1.81x)** |
-| **dl**           | 16          | 2.16 GiB   | 60.0s    | 36.86 MiB/s | 147.9%         | **+47.9% (1.48x)** |
-| **dl (dynamic)** | Auto        | 2.48 GiB   | 60.0s    | 42.29 MiB/s | 169.7%         | **+69.7% (1.70x)** |
+| Downloader       | Connections | Downloaded | Avg Speed   | Performance Gain   |
+| ---------------- | :---------: | :--------: | :---------: | :----------------: |
+| wget         | 1           | 1.46 GiB   | 24.93 MiB/s | Baseline           |
+| axel         | 8           | 2.11 GiB   | 35.91 MiB/s | +44.1% (1.44x) |
+| axel         | 16          | 862.46 MiB | 14.37 MiB/s | -42.4% (0.58x)     |
+| **dl**           | **8**           | **2.65 GiB**   | **45.16 MiB/s** | **+81.2% (1.81x)** |
+| dl           | 16          | 2.16 GiB   | 36.86 MiB/s | +47.9% (1.48x) |
+| dl (dynamic) | Auto        | 2.48 GiB   | 42.29 MiB/s | +69.7% (1.70x) |
 
 `dl`'s range-based concurrent request scheduling optimizes bandwidth utilization, letting you pull down assets substantially faster than traditional single-threaded utilities or poorly-optimized concurrent utilities.
 

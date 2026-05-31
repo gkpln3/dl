@@ -96,9 +96,8 @@ jobs:
           TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           FORMULA_CONTENT: |
             class Dl < Formula
-              desc "A blazing-fast download accelerator CLI tool supporting multi-threaded HTTP/S streams and BitTorrent"
+              desc "Fast CLI download accelerator with multi-threaded HTTP/S streams and torrent support"
               homepage "https://github.com/${{ github.repository }}"
-              version "${{ env.VERSION }}"
               license "MIT"
 
               if OS.mac?
@@ -145,7 +144,7 @@ jobs:
           mkdir -p Formula
           
           # Write the dynamically updated Homebrew Formula
-          echo "$FORMULA_CONTENT" > Formula/dl.rb
+          echo -n "$FORMULA_CONTENT" > Formula/dl.rb
           
           # Commit and push formula updates
           git add Formula/dl.rb
