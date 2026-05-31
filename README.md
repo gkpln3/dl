@@ -10,7 +10,7 @@ A lightweight, high-performance CLI downloader and accelerator written in Rust. 
 ## Features
 
 - **⚡ HTTP/HTTPS Download Acceleration**: Downloads files using concurrent range requests split into multiple chunks, dramatically speeding up HTTP/HTTPS transfers.
-- **🌐 Dynamic Protocol Negotiation & Multiplexing**: Native support for **HTTP/1.1 pipelining** and advanced connection multiplexing optimizations for **HTTP/2** and **HTTP/3** to maximize bandwidth throughput.
+- **📈 Dynamic & Adaptive Worker Scaling**: Automatically optimizes the number of concurrent connections when not specified. It starts with a base set of workers and progressively increases or decreases the count based on real-time speed feedback, maximizing bandwidth while avoiding congestion or rate limits.
 - **🧲 BitTorrent & Magnet Link Support**: Seamlessly downloads torrents or magnet links.
 - **📂 Interactive File Selection**: For multi-file torrents, `dl` interactively prompts you to choose which specific files you want to download.
 - **⏯️ Resumable Streams**: Automatically saves transfer state so you can pause and resume downloads without losing progress.
@@ -72,7 +72,7 @@ dl [OPTIONS] <SOURCE>
 ### Options
 
 - `-o, --output <OUTPUT>`: Output file for HTTP downloads, or output directory for torrents.
-- `-j, --connections <CONNECTIONS>`: Number of concurrent HTTP range workers (default: `8`).
+- `-j, --connections <CONNECTIONS>`: Number of concurrent HTTP range workers (dynamic/auto-scaling by default).
 - `--chunk-size <CHUNK_SIZE>`: HTTP chunk size (supports plain bytes, or suffix units like `K`, `M`, `G`) (default: `2M`).
 - `--no-resume`: Disable resumable inline metadata (state saving).
 - `--overwrite`: Force-replace an existing output path.
@@ -83,17 +83,23 @@ dl [OPTIONS] <SOURCE>
 ### Examples
 
 #### 1. Standard HTTP/HTTPS Download
-Fast download using the default 8 concurrent connection threads:
+Fast download using the dynamic/auto-scaling connection manager:
 ```bash
 dl https://example.com/large-file.zip
 ```
 
-#### 2. Downloading via Torrent Magnet Link
+#### 2. Download with Fixed Connection Count
+Set a fixed number of concurrent threads (e.g. 16 workers):
+```bash
+dl -j 16 https://example.com/large-file.zip
+```
+
+#### 3. Downloading via Torrent Magnet Link
 ```bash
 dl "magnet:?xt=urn:btih:..."
 ```
 
-#### 3. Downloading via `.torrent` File
+#### 4. Downloading via `.torrent` File
 ```bash
 dl ./ubuntu-desktop.torrent
 ```

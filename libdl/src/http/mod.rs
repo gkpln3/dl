@@ -61,6 +61,7 @@ struct WorkerContext {
     progress: Option<ProgressSender>,
     etag: Option<String>,
     last_modified: Option<String>,
+    extra_workers_to_stop: Arc<AtomicUsize>,
 }
 
 pub async fn download_http(
@@ -74,7 +75,7 @@ pub async fn download_http(
 
     let client = Client::builder()
         .user_agent(options.user_agent.clone())
-        .pool_max_idle_per_host(options.connections)
+        .pool_max_idle_per_host(options.connections.unwrap_or(32))
         .connect_timeout(Duration::from_secs(10))
         .read_timeout(Duration::from_secs(30))
         .tcp_nodelay(true)
@@ -112,7 +113,7 @@ pub async fn download_http(
         }
     }
 
-    let mut use_parallel = probe.ranges_supported && probe.total_size.is_some() && options.connections > 1;
+    let mut use_parallel = probe.ranges_supported && probe.total_size.is_some() && options.connections.map_or(true, |c| c > 1);
 
     if use_parallel && options.resume {
         if let Ok(metadata) = fs::metadata(&download_path).await {
@@ -136,10 +137,10 @@ pub async fn download_http(
     if use_parallel {
         if let Some(total_size) = probe.total_size {
             if options.chunk_size == crate::types::DEFAULT_CHUNK_SIZE {
-                options.chunk_size = calculate_dynamic_chunk_size(total_size, options.connections);
+                options.chunk_size = calculate_dynamic_chunk_size(total_size, options.connections.unwrap_or(8));
                 tracing::debug!(
                     total_size,
-                    connections = options.connections,
+                    connections = ?options.connections,
                     chunk_size = options.chunk_size,
                     "Dynamically scaled chunk size for parallel download"
                 );
@@ -309,7 +310,11 @@ async fn download_parallel(
         });
     }
 
-    let worker_count = options.connections.min(total_chunks).max(1);
+    let is_dynamic = options.connections.is_none();
+    let initial_connections = options.connections.unwrap_or(4);
+    let worker_count = initial_connections.min(total_chunks).max(1);
+    let extra_workers_to_stop = Arc::new(AtomicUsize::new(0));
+
     let context = WorkerContext {
         client,
         url: url.clone(),
@@ -318,7 +323,7 @@ async fn download_parallel(
         completed,
         metadata_lock: Arc::new(Mutex::new(())),
         last_flush: Arc::new(Mutex::new(Instant::now())),
-        downloaded,
+        downloaded: downloaded.clone(),
         completed_count,
         active_workers,
         total_size,
@@ -328,6 +333,7 @@ async fn download_parallel(
         progress: options.progress.clone(),
         etag: probe.etag,
         last_modified: probe.last_modified,
+        extra_workers_to_stop: extra_workers_to_stop.clone(),
     };
 
     let mut workers = JoinSet::new();
@@ -335,6 +341,20 @@ async fn download_parallel(
         let worker_context = context.clone();
         workers.spawn(async move { run_worker(worker_id, worker_context).await });
     }
+
+    let mut interval = tokio::time::interval(Duration::from_secs(2));
+    // Reset the first tick since `interval` ticks immediately on creation.
+    interval.tick().await;
+
+    let mut current_worker_count = worker_count;
+    let mut next_worker_id = worker_count;
+    let mut last_bytes = downloaded.load(Ordering::Relaxed);
+    let mut last_time = Instant::now();
+    let mut last_speed: Option<f64> = None;
+    let mut consecutive_no_improvement = 0;
+
+    let min_workers = 1;
+    let max_workers = 32;
 
     let mut ctrl_c_hit = false;
     loop {
@@ -352,6 +372,101 @@ async fn download_parallel(
                     Err(error) => {
                         workers.abort_all();
                         return Err(error.into());
+                    }
+                }
+            }
+            _ = interval.tick() => {
+                if is_dynamic {
+                    let current_bytes = downloaded.load(Ordering::Relaxed);
+                    let elapsed = last_time.elapsed();
+                    if elapsed.as_secs_f64() >= 0.5 {
+                        let current_speed = (current_bytes.saturating_sub(last_bytes)) as f64 / elapsed.as_secs_f64();
+                        last_bytes = current_bytes;
+                        last_time = Instant::now();
+
+                        let queue_is_empty = {
+                            let q = context.queue.lock().await;
+                            q.is_empty()
+                        };
+
+                        if !queue_is_empty {
+                            match last_speed {
+                                None => {
+                                    last_speed = Some(current_speed);
+                                    if current_worker_count < max_workers {
+                                        let increase = 2.min(max_workers - current_worker_count);
+                                        if increase > 0 {
+                                            tracing::info!(
+                                                "Dynamic worker scaling: Initial speed {:.2} MiB/s with {} workers. Increasing to {}.",
+                                                current_speed / (1024.0 * 1024.0),
+                                                current_worker_count,
+                                                current_worker_count + increase
+                                            );
+                                            for _ in 0..increase {
+                                                let id = next_worker_id;
+                                                next_worker_id += 1;
+                                                let worker_context = context.clone();
+                                                workers.spawn(async move { run_worker(id, worker_context).await });
+                                            }
+                                            current_worker_count += increase;
+                                        }
+                                    }
+                                }
+                                Some(prev_speed) => {
+                                    if prev_speed > 0.0 {
+                                        let improvement = (current_speed - prev_speed) / prev_speed;
+                                        if improvement >= 0.08 {
+                                            tracing::info!(
+                                                "Dynamic worker scaling: Speed improved by {:.1}% ({:.2} MiB/s -> {:.2} MiB/s) with {} workers.",
+                                                improvement * 100.0,
+                                                prev_speed / (1024.0 * 1024.0),
+                                                current_speed / (1024.0 * 1024.0),
+                                                current_worker_count
+                                            );
+                                            last_speed = Some(current_speed);
+                                            consecutive_no_improvement = 0;
+
+                                            if current_worker_count < max_workers {
+                                                let increase = 2.min(max_workers - current_worker_count);
+                                                if increase > 0 {
+                                                    tracing::info!("Scaling up worker count to {}.", current_worker_count + increase);
+                                                    for _ in 0..increase {
+                                                        let id = next_worker_id;
+                                                        next_worker_id += 1;
+                                                        let worker_context = context.clone();
+                                                        workers.spawn(async move { run_worker(id, worker_context).await });
+                                                    }
+                                                    current_worker_count += increase;
+                                                }
+                                            }
+                                        } else {
+                                            consecutive_no_improvement += 1;
+                                            tracing::info!(
+                                                "Dynamic worker scaling: Speed change was {:.1}% ({:.2} MiB/s -> {:.2} MiB/s) with {} workers.",
+                                                improvement * 100.0,
+                                                prev_speed / (1024.0 * 1024.0),
+                                                current_speed / (1024.0 * 1024.0),
+                                                current_worker_count
+                                            );
+
+                                            if consecutive_no_improvement == 1 {
+                                                let decrease = 2.min(current_worker_count.saturating_sub(min_workers));
+                                                if decrease > 0 {
+                                                    tracing::info!("Scaling back down to {} workers to prevent congestion.", current_worker_count - decrease);
+                                                    extra_workers_to_stop.fetch_add(decrease, Ordering::SeqCst);
+                                                    current_worker_count -= decrease;
+                                                    last_speed = None;
+                                                }
+                                            } else {
+                                                tracing::info!("Dynamic worker scaling: Speed stabilized with {} workers.", current_worker_count);
+                                            }
+                                        }
+                                    } else {
+                                        last_speed = Some(current_speed);
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -415,6 +530,20 @@ async fn run_worker(worker_id: usize, context: WorkerContext) -> Result<()> {
         .await?;
 
     loop {
+        if context.extra_workers_to_stop.load(Ordering::Relaxed) > 0 {
+            let res = context.extra_workers_to_stop.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |val| {
+                if val > 0 {
+                    Some(val - 1)
+                } else {
+                    None
+                }
+            });
+            if res.is_ok() {
+                tracing::info!(worker_id, "Shutting down worker as requested by dynamic adjustment");
+                return Ok(());
+            }
+        }
+
         let Some(segment) = pop_segment(&context).await else {
             return Ok(());
         };
@@ -1109,7 +1238,7 @@ mod tests {
             format!("{base_url}/payload.bin"),
             &output,
             DownloadOptions {
-                connections: 4,
+                connections: Some(4),
                 chunk_size: 32 * 1024,
                 overwrite: true,
                 ..DownloadOptions::default()
@@ -1139,7 +1268,7 @@ mod tests {
             format!("{base_url}/rate-limited.bin"),
             &output,
             DownloadOptions {
-                connections: 4,
+                connections: Some(4),
                 chunk_size: 32 * 1024,
                 overwrite: true,
                 ..DownloadOptions::default()
@@ -1194,7 +1323,7 @@ mod tests {
             format!("{base_url}/resume_test.bin"),
             &output,
             DownloadOptions {
-                connections: 4,
+                connections: Some(4),
                 chunk_size: chunk_size as u64,
                 overwrite: true,
                 resume: true,
@@ -1240,7 +1369,7 @@ mod tests {
             format!("{base_url}/resume_single_test.bin"),
             &output,
             DownloadOptions {
-                connections: 4,
+                connections: Some(4),
                 overwrite: true,
                 resume: true,
                 ..DownloadOptions::default()
@@ -1298,7 +1427,7 @@ mod tests {
             format!("{base_url}/resume_adopt_test.bin"),
             &output,
             DownloadOptions {
-                connections: 4,
+                connections: Some(4),
                 overwrite: true,
                 resume: true,
                 ..DownloadOptions::default()
@@ -1344,7 +1473,7 @@ mod tests {
             format!("{base_url}/pre_allocated.bin"),
             &output,
             DownloadOptions {
-                connections: 4,
+                connections: Some(4),
                 chunk_size: 128 * 1024,
                 overwrite: true,
                 resume: true,
@@ -1367,6 +1496,47 @@ mod tests {
             }
         }
         assert!(saw_parallel, "Should have run parallel download with multiple workers");
+
+        let _ = shutdown.send(());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn dynamic_connections_selection_adjusts_workers() {
+        let data: Vec<u8> = (0..128_u32)
+            .flat_map(|value| value.to_be_bytes())
+            .cycle()
+            .take(5 * 1024 * 1024)
+            .collect();
+        let (base_url, shutdown) = spawn_range_server(data.clone()).await;
+        let dir = tempdir().unwrap();
+        let output = dir.path().join("dynamic_test.bin");
+
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+
+        let summary = download_http(
+            format!("{base_url}/dynamic_test.bin"),
+            &output,
+            DownloadOptions {
+                connections: None, // Enable dynamic worker count!
+                chunk_size: 128 * 1024,
+                overwrite: true,
+                progress: Some(tx),
+                ..DownloadOptions::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(summary.total_bytes, data.len() as u64);
+        assert_eq!(fs::read(&output).await.unwrap(), data);
+
+        let mut saw_parallel = false;
+        while let Ok(progress) = rx.try_recv() {
+            if progress.active_workers > 1 {
+                saw_parallel = true;
+            }
+        }
+        assert!(saw_parallel, "Should have run parallel download with dynamic workers");
 
         let _ = shutdown.send(());
     }

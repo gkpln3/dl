@@ -15,7 +15,7 @@ pub type ProgressReceiver = mpsc::UnboundedReceiver<DownloadProgress>;
 
 #[derive(Debug, Clone)]
 pub struct DownloadOptions {
-    pub connections: usize,
+    pub connections: Option<usize>,
     pub chunk_size: u64,
     pub resume: bool,
     pub overwrite: bool,
@@ -28,7 +28,7 @@ pub struct DownloadOptions {
 impl Default for DownloadOptions {
     fn default() -> Self {
         Self {
-            connections: DEFAULT_CONNECTIONS,
+            connections: None,
             chunk_size: DEFAULT_CHUNK_SIZE,
             resume: true,
             overwrite: false,
@@ -47,7 +47,7 @@ impl DownloadOptions {
     }
 
     pub fn normalized(mut self) -> Self {
-        self.connections = self.connections.max(1);
+        self.connections = self.connections.map(|c| c.max(1));
         self.chunk_size = self.chunk_size.max(64 * 1024);
         self
     }

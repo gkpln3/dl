@@ -27,8 +27,8 @@ struct Cli {
     output: Option<PathBuf>,
 
     /// Number of concurrent HTTP range workers.
-    #[arg(short = 'j', long, default_value_t = 8)]
-    connections: usize,
+    #[arg(short = 'j', long)]
+    connections: Option<usize>,
 
     /// HTTP chunk size. Supports plain bytes, K, M, and G suffixes.
     #[arg(long, default_value = "2M", value_parser = parse_size)]
