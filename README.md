@@ -1,23 +1,38 @@
-# dl ⚡ - A fast lightweight CLI downloader and accelerator
 
-[![Release](https://img.shields.io/github/v/release/gkpln3/dl)](https://github.com/gkpln3/dl/releases)
-[![Build](https://img.shields.io/github/check-runs/gkpln3/dl/main?label=build)](https://github.com/gkpln3/dl/actions/workflows/release.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+<p align="center">
+  <img src="assets/logo.svg" alt="dl logo" />
+</p>
 
-A modern, lightweight, high-performance CLI downloader and accelerator written in Rust. `dl` speeds up downloads by utilizing multiple concurrent connections for HTTP streams and supports downloading directly from BitTorrent (including magnet links and `.torrent` files) with an interactive file selector.
+<h1 align="center">dl - A Blazing-Fast CLI Downloader</h1>
+
+<p align="center">
+  <strong>Fast CLI download accelerator with multi-threaded HTTP/S streams and torrent support.</strong>
+</p>
+
+<p align="center">
+  <a href="https://github.com/gkpln3/dl/stargazers"><img src="https://img.shields.io/github/stars/gkpln3/dl" alt="GitHub stars"></a>
+  <a href="https://github.com/gkpln3/dl/releases"><img src="https://img.shields.io/github/v/release/gkpln3/dl" alt="GitHub release"></a>
+  <a href="https://github.com/gkpln3/dl/actions"><img src="https://img.shields.io/github/check-runs/gkpln3/dl/main?label=build" alt="GitHub build status"></a>
+  <a href="https://github.com/gkpln3/dl/issues"><img src="https://img.shields.io/github/issues/gkpln3/dl" alt="GitHub issues"></a>
+  <a href="https://github.com/gkpln3/dl/blob/main/LICENSE"><img src="https://img.shields.io/github/license/gkpln3/dl" alt="License"></a>
+</p>
+
+---
+
+DL is a modern, lightweight, high-performance CLI downloader and accelerator written in Rust. `dl` speeds up downloads by utilizing multiple concurrent connections for HTTP streams and supports downloading directly from BitTorrent (including magnet links and `.torrent` files) with an interactive file selector.
 
 
-## Features
+## ✨ Features
 
-- **⚡ HTTP/HTTPS Download Acceleration**: Downloads files using concurrent range requests split into multiple chunks, dramatically speeding up HTTP/HTTPS transfers.
-- **📈 Dynamic & Adaptive Worker Scaling**: Automatically optimizes the number of concurrent connections when not specified. It starts with a base set of workers and progressively increases or decreases the count based on real-time speed feedback, maximizing bandwidth while avoiding congestion or rate limits.
-- **🌐 Dynamic Protocol Negotiation & Connection Multiplexing**: Native support for **ALPN protocol negotiation** and advanced stream-level connection multiplexing via **HTTP/2** with adaptive flow control, drastically reducing handshake overhead.
-- **🧲 BitTorrent & Magnet Link Support**: Seamlessly downloads torrents or magnet links.
-- **📂 Interactive File Selection**: For multi-file torrents, `dl` interactively prompts you to choose which specific files you want to download.
-- **⏯️ Resumable Streams**: Automatically saves transfer state so you can pause and resume downloads without losing progress.
+- **HTTP/HTTPS Download Acceleration**: Downloads files using concurrent range requests split into multiple chunks, dramatically speeding up HTTP/HTTPS transfers.
+- **Dynamic & Adaptive Worker Scaling**: Automatically optimizes the number of concurrent connections when not specified. It starts with a base set of workers and progressively increases or decreases the count based on real-time speed feedback, maximizing bandwidth while avoiding congestion or rate limits.
+- **Dynamic Protocol Negotiation & Connection Multiplexing**: Native support for **ALPN protocol negotiation** and advanced stream-level connection multiplexing via **HTTP/2** with adaptive flow control, drastically reducing handshake overhead.
+- **BitTorrent & Magnet Link Support**: Seamlessly downloads torrents or magnet links.
+- **Interactive File Selection**: For multi-file torrents, `dl` interactively prompts you to choose which specific files you want to download.
+- **Resumable Streams**: Automatically saves transfer state so you can pause and resume downloads without losing progress.
 
 
-## Installation
+## ⬇️ Installation
 
 ### Homebrew (Recommended for macOS and Linux)
 
@@ -51,41 +66,41 @@ cargo install --path dl-cli
 This compiles `dl` in release mode and installs the executable directly to your local Cargo bin directory (usually `~/.cargo/bin`). Make sure this directory is in your shell's `PATH` to run `dl` from anywhere!
 
 
-## Performance Comparison ⚡
+## ⚡ Performance Comparison
 
 ### Benchmark Results: Ubuntu 26.04 Desktop ISO (6.5 GB)
 
-| File Size | Duration | URL |
-| --------- | -------- | --- |
+| File Size | Duration   | URL                                                                                                |
+| --------- | ---------- | -------------------------------------------------------------------------------------------------- |
 | 6.07 GiB  | 60 seconds | [ubuntu-26.04-desktop-amd64.iso](https://releases.ubuntu.com/26.04/ubuntu-26.04-desktop-amd64.iso) |
 
-| Downloader       | Connections | Downloaded | Avg Speed   | Performance Gain    |
-| ---------------- | :---------: | :--------: | :---------: | :-----------------: |
-| wget         | 1           | 974.19 MiB | 16.21 MiB/s | Baseline            |
-| axel         | 8           | 1.09 GiB   | 18.64 MiB/s | +15.0% (1.15x)  |
-| axel         | 16          | 1.46 GiB   | 24.85 MiB/s | +53.3% (1.53x)  |
-| dl           | 8           | 1.75 GiB   | 29.84 MiB/s | +84.0% (1.84x)  |
-| **dl**           | **16**          | **2.69 GiB**   | **45.86 MiB/s** | **+182.9% (2.83x)** |
-| dl (dynamic) | Auto        | 1.69 GiB   | 28.83 MiB/s | +77.8% (1.78x)  |
+| Downloader   | Connections |  Downloaded  |    Avg Speed    | Performance Gain |
+| ------------ | :---------: | :----------: | :-------------: | :--------------: |
+| wget         |      1      |  974.19 MiB  |   16.21 MiB/s   |     Baseline     |
+| axel         |      8      |   1.09 GiB   |   18.64 MiB/s   |      1.15x       |
+| axel         |     16      |   1.46 GiB   |   24.85 MiB/s   |      1.53x       |
+| dl           |      8      |   1.75 GiB   |   29.84 MiB/s   |      1.84x       |
+| **dl**       |   **16**    | **2.69 GiB** | **45.86 MiB/s** |    **2.83x**     |
+| dl (dynamic) |    Auto     |   1.69 GiB   |   28.83 MiB/s   |      1.78x       |
 
 ### Benchmark Results: iPhone 18,2 iOS 26.5 Restore IPSW (11.3 GB)
-| File Size | Duration | URL |
-| --------- | -------- | --- |
-| 11.3 GiB | 60 seconds | [iPhone18,2_26.5_23F77_Restore.ipsw](https://updates.cdn-apple.com/2026SpringFCS/fullrestores/122-56404/B6269659-BD71-4CB7-AF7C-F8D9C3CC6E2D/iPhone18,2_26.5_23F77_Restore.ipsw) |
+| File Size | Duration   | URL                                                                                                                                                                              |
+| --------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 11.3 GiB  | 60 seconds | [iPhone18,2_26.5_23F77_Restore.ipsw](https://updates.cdn-apple.com/2026SpringFCS/fullrestores/122-56404/B6269659-BD71-4CB7-AF7C-F8D9C3CC6E2D/iPhone18,2_26.5_23F77_Restore.ipsw) |
 
-| Downloader       | Connections | Downloaded | Avg Speed   | Performance Gain   |
-| ---------------- | :---------: | :--------: | :---------: | :----------------: |
-| wget         | 1           | 1.46 GiB   | 24.93 MiB/s | Baseline           |
-| axel         | 8           | 2.11 GiB   | 35.91 MiB/s | +44.1% (1.44x) |
-| axel         | 16          | 862.46 MiB | 14.37 MiB/s | -42.4% (0.58x)     |
-| **dl**           | **8**           | **2.65 GiB**   | **45.16 MiB/s** | **+81.2% (1.81x)** |
-| dl           | 16          | 2.16 GiB   | 36.86 MiB/s | +47.9% (1.48x) |
-| dl (dynamic) | Auto        | 2.48 GiB   | 42.29 MiB/s | +69.7% (1.70x) |
+| Downloader   | Connections |  Downloaded  |    Avg Speed    | Performance Gain |
+| ------------ | :---------: | :----------: | :-------------: | :--------------: |
+| wget         |      1      |   1.46 GiB   |   24.93 MiB/s   |     Baseline     |
+| axel         |      8      |   2.11 GiB   |   35.91 MiB/s   |      1.44x       |
+| axel         |     16      |  862.46 MiB  |   14.37 MiB/s   |      0.58x       |
+| **dl**       |    **8**    | **2.65 GiB** | **45.16 MiB/s** |    **1.81x**     |
+| dl           |     16      |   2.16 GiB   |   36.86 MiB/s   |      1.48x       |
+| dl (dynamic) |    Auto     |   2.48 GiB   |   42.29 MiB/s   |      1.70x       |
 
-`dl`'s range-based concurrent request scheduling optimizes bandwidth utilization, letting you pull down assets substantially faster than traditional single-threaded utilities or poorly-optimized concurrent utilities.
+> **Note**: Performance can vary based on network conditions, server capabilities, and the specific file being downloaded. Your mileage may vary, but `dl` consistently outperforms single-threaded downloaders and often exceeds the performance of other multi-threaded utilities. `dl`'s dynamic connection manager also helps it adapt to varying network conditions, providing optimal performance without manual tuning.
 
 
-## Usage
+## 🛠️ Usage
 
 ```bash
 dl [OPTIONS] <SOURCE>
@@ -126,7 +141,7 @@ dl "magnet:?xt=urn:btih:..."
 dl ./ubuntu-desktop.torrent
 ```
 
-## Benchmarking 📊
+## 📊 Benchmarking
 
 You can benchmark `dl` against `wget` and `axel` using the provided `benchmark.py` script in the root directory. The script compiles `dl` in release mode, runs each download utility inside a pseudo-terminal (to capture active progress updates), measures their average transfer speed over a set duration.
 
@@ -164,6 +179,6 @@ For more options (like benchmarking a custom URL), run:
 ./benchmark.py --help
 ```
 
-## License
+## 📄 License
 
 This project is licensed under MIT License. See the [LICENSE](LICENSE) file for details.
