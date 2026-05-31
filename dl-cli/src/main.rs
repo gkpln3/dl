@@ -1,7 +1,5 @@
 use std::collections::VecDeque;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use clap::Parser;
@@ -238,40 +236,13 @@ async fn render_progress(mut progress_rx: libdl::ProgressReceiver) {
     let overall = multi.add(ProgressBar::new_spinner());
     let status = multi.add(ProgressBar::new_spinner());
 
-    let initial_bytes = Arc::new(AtomicU64::new(u64::MAX));
-
-    // Sliding window speed tracker (3 seconds window)
-    let tracker = Arc::new(Mutex::new(SpeedTracker::new(Duration::from_secs(3))));
-    let tracker_for_rx = Arc::clone(&tracker);
-    let tracker_for_speed = Arc::clone(&tracker);
-    let tracker_for_eta = Arc::clone(&tracker);
+    let mut tracker = SpeedTracker::new(Duration::from_secs(3));
 
     overall.set_style(
         ProgressStyle::with_template(
-            "{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} {speed_resumed} {eta_resumed}",
+            "{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} {msg}",
         )
         .unwrap()
-        .with_key("speed_resumed", move |_state: &indicatif::ProgressState, w: &mut dyn std::fmt::Write| {
-            let mut t = tracker_for_speed.lock().unwrap();
-            let speed = t.current_speed();
-            let _ = write!(w, "{}/s", format_bytes(speed as u64));
-        })
-        .with_key("eta_resumed", move |state: &indicatif::ProgressState, w: &mut dyn std::fmt::Write| {
-            let mut t = tracker_for_eta.lock().unwrap();
-            let speed = t.current_speed();
-            if speed < 1.0 {
-                let _ = write!(w, "--:--:--");
-            } else {
-                let len = state.len().unwrap_or(state.pos());
-                if len <= state.pos() {
-                    let _ = write!(w, "0s");
-                } else {
-                    let remaining = len - state.pos();
-                    let eta_secs = remaining as f64 / speed;
-                    let _ = write!(w, "{}", format_duration(Duration::from_secs_f64(eta_secs)));
-                }
-            }
-        })
         .progress_chars("=>-"),
     );
     status.set_style(ProgressStyle::with_template("{msg}").unwrap());
@@ -284,11 +255,7 @@ async fn render_progress(mut progress_rx: libdl::ProgressReceiver) {
 
     while let Some(progress) = progress_rx.recv().await {
         if progress.phase == DownloadPhase::Downloading {
-            let initial = progress.downloaded_bytes;
-            let _ = initial_bytes.compare_exchange(u64::MAX, initial, Ordering::SeqCst, Ordering::SeqCst);
-            
-            let mut t = tracker_for_rx.lock().unwrap();
-            t.add_sample(progress.downloaded_bytes);
+            tracker.add_sample(progress.downloaded_bytes);
         }
 
         let is_complete = progress.phase == DownloadPhase::Complete;
@@ -300,7 +267,30 @@ async fn render_progress(mut progress_rx: libdl::ProgressReceiver) {
         let now = Instant::now();
         if is_complete || phase_changed || now.duration_since(last_update) >= UI_UPDATE_INTERVAL {
             if let Some(ref p) = latest_progress {
-                update_overall(&overall, p);
+                let speed = tracker.current_speed();
+                let speed_str = format!("{}/s", format_bytes(speed as u64));
+                let eta_str = if p.phase == DownloadPhase::Complete {
+                    String::new()
+                } else if speed < 1.0 {
+                    "--:--:--".to_string()
+                } else {
+                    let total = p.total_bytes.unwrap_or(p.downloaded_bytes);
+                    if total <= p.downloaded_bytes {
+                        "0s".to_string()
+                    } else {
+                        let remaining = total - p.downloaded_bytes;
+                        let eta_secs = remaining as f64 / speed;
+                        format_duration(Duration::from_secs_f64(eta_secs))
+                    }
+                };
+
+                let speed_and_eta = if eta_str.is_empty() {
+                    speed_str
+                } else {
+                    format!("{speed_str} {eta_str}")
+                };
+
+                update_overall(&overall, p, speed_and_eta);
                 status.set_message(status_message(p));
                 needs_render = false;
                 last_update = now;
@@ -315,7 +305,30 @@ async fn render_progress(mut progress_rx: libdl::ProgressReceiver) {
 
     if needs_render {
         if let Some(ref p) = latest_progress {
-            update_overall(&overall, p);
+            let speed = tracker.current_speed();
+            let speed_str = format!("{}/s", format_bytes(speed as u64));
+            let eta_str = if p.phase == DownloadPhase::Complete {
+                String::new()
+            } else if speed < 1.0 {
+                "--:--:--".to_string()
+            } else {
+                let total = p.total_bytes.unwrap_or(p.downloaded_bytes);
+                if total <= p.downloaded_bytes {
+                    "0s".to_string()
+                } else {
+                    let remaining = total - p.downloaded_bytes;
+                    let eta_secs = remaining as f64 / speed;
+                    format_duration(Duration::from_secs_f64(eta_secs))
+                }
+            };
+
+            let speed_and_eta = if eta_str.is_empty() {
+                speed_str
+            } else {
+                format!("{speed_str} {eta_str}")
+            };
+
+            update_overall(&overall, p, speed_and_eta);
             status.set_message(status_message(p));
             if p.phase == DownloadPhase::Complete {
                 overall.finish();
@@ -346,14 +359,16 @@ fn format_duration(duration: Duration) -> String {
     }
 }
 
-fn update_overall(overall: &ProgressBar, progress: &DownloadProgress) {
+fn update_overall(overall: &ProgressBar, progress: &DownloadProgress, speed_and_eta: String) {
     if let Some(total) = progress.total_bytes {
         overall.set_length(total);
     }
     overall.set_position(progress.downloaded_bytes);
 
     if progress.total_bytes.is_none() {
-        overall.set_message(format_bytes(progress.downloaded_bytes));
+        overall.set_message(format!("{} | {}", format_bytes(progress.downloaded_bytes), speed_and_eta));
+    } else {
+        overall.set_message(speed_and_eta);
     }
 }
 

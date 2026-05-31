@@ -1289,6 +1289,7 @@ name = "libdl"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "fastrand",
  "futures-util",
  "librqbit",
  "reqwest",

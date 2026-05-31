@@ -13,6 +13,7 @@ torrent = ["dep:bytes", "dep:librqbit"]
 [dependencies]
 bytes = { workspace = true, optional = true }
 futures-util.workspace = true
+fastrand = { workspace = true }
 librqbit = { workspace = true, optional = true }
 reqwest.workspace = true
 serde.workspace = true

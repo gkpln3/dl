@@ -42,6 +42,126 @@ struct HttpProbe {
     last_modified: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ScalerAction {
+    ScaleUp { count: usize, start_id: usize },
+    ScaleDown { count: usize },
+}
+
+struct DynamicScaler {
+    min_workers: usize,
+    max_workers: usize,
+    current_worker_count: usize,
+    next_worker_id: usize,
+    last_bytes: u64,
+    last_time: Instant,
+    last_speed: Option<f64>,
+    consecutive_no_improvement: u32,
+}
+
+impl DynamicScaler {
+    fn new(initial_workers: usize, initial_bytes: u64) -> Self {
+        Self {
+            min_workers: 1,
+            max_workers: 32,
+            current_worker_count: initial_workers,
+            next_worker_id: initial_workers,
+            last_bytes: initial_bytes,
+            last_time: Instant::now(),
+            last_speed: None,
+            consecutive_no_improvement: 0,
+        }
+    }
+
+    fn update(&mut self, current_bytes: u64, queue_is_empty: bool) -> Option<ScalerAction> {
+        let elapsed = self.last_time.elapsed();
+        if elapsed.as_secs_f64() < 0.5 {
+            return None;
+        }
+
+        let current_speed = (current_bytes.saturating_sub(self.last_bytes)) as f64 / elapsed.as_secs_f64();
+        self.last_bytes = current_bytes;
+        self.last_time = Instant::now();
+
+        if queue_is_empty {
+            return None;
+        }
+
+        match self.last_speed {
+            None => {
+                self.last_speed = Some(current_speed);
+                if self.current_worker_count < self.max_workers {
+                    let increase = 2.min(self.max_workers - self.current_worker_count);
+                    if increase > 0 {
+                        tracing::info!(
+                            "Dynamic worker scaling: Initial speed {:.2} MiB/s with {} workers. Increasing to {}.",
+                            current_speed / (1024.0 * 1024.0),
+                            self.current_worker_count,
+                            self.current_worker_count + increase
+                        );
+                        let start_id = self.next_worker_id;
+                        self.next_worker_id += increase;
+                        self.current_worker_count += increase;
+                        return Some(ScalerAction::ScaleUp { count: increase, start_id });
+                    }
+                }
+            }
+            Some(prev_speed) => {
+                if prev_speed > 0.0 {
+                    let improvement = (current_speed - prev_speed) / prev_speed;
+                    if improvement >= 0.08 {
+                        tracing::info!(
+                            "Dynamic worker scaling: Speed improved by {:.1}% ({:.2} MiB/s -> {:.2} MiB/s) with {} workers.",
+                            improvement * 100.0,
+                            prev_speed / (1024.0 * 1024.0),
+                            current_speed / (1024.0 * 1024.0),
+                            self.current_worker_count
+                        );
+                        self.last_speed = Some(current_speed);
+                        self.consecutive_no_improvement = 0;
+
+                        if self.current_worker_count < self.max_workers {
+                            let increase = 2.min(self.max_workers - self.current_worker_count);
+                            if increase > 0 {
+                                tracing::info!("Scaling up worker count to {}.", self.current_worker_count + increase);
+                                let start_id = self.next_worker_id;
+                                self.next_worker_id += increase;
+                                self.current_worker_count += increase;
+                                return Some(ScalerAction::ScaleUp { count: increase, start_id });
+                            }
+                        }
+                    } else {
+                        self.consecutive_no_improvement += 1;
+                        tracing::info!(
+                            "Dynamic worker scaling: Speed change was {:.1}% ({:.2} MiB/s -> {:.2} MiB/s) with {} workers.",
+                            improvement * 100.0,
+                            prev_speed / (1024.0 * 1024.0),
+                            current_speed / (1024.0 * 1024.0),
+                            self.current_worker_count
+                        );
+
+                        if self.consecutive_no_improvement == 1 {
+                            let decrease = 2.min(self.current_worker_count.saturating_sub(self.min_workers));
+                            if decrease > 0 {
+                                tracing::info!("Scaling back down to {} workers to prevent congestion.", self.current_worker_count - decrease);
+                                self.current_worker_count -= decrease;
+                                self.last_speed = None;
+                                return Some(ScalerAction::ScaleDown { count: decrease });
+                            }
+                        } else {
+                            tracing::info!("Dynamic worker scaling: Speed stabilized with {} workers.", self.current_worker_count);
+                        }
+                    }
+                } else {
+                    self.last_speed = Some(current_speed);
+                }
+            }
+        }
+
+        None
+    }
+}
+
 #[derive(Clone)]
 struct WorkerContext {
     client: Client,
@@ -346,15 +466,7 @@ async fn download_parallel(
     // Reset the first tick since `interval` ticks immediately on creation.
     interval.tick().await;
 
-    let mut current_worker_count = worker_count;
-    let mut next_worker_id = worker_count;
-    let mut last_bytes = downloaded.load(Ordering::Relaxed);
-    let mut last_time = Instant::now();
-    let mut last_speed: Option<f64> = None;
-    let mut consecutive_no_improvement = 0;
-
-    let min_workers = 1;
-    let max_workers = 32;
+    let mut scaler = DynamicScaler::new(worker_count, downloaded.load(Ordering::Relaxed));
 
     let mut ctrl_c_hit = false;
     loop {
@@ -378,93 +490,22 @@ async fn download_parallel(
             _ = interval.tick() => {
                 if is_dynamic {
                     let current_bytes = downloaded.load(Ordering::Relaxed);
-                    let elapsed = last_time.elapsed();
-                    if elapsed.as_secs_f64() >= 0.5 {
-                        let current_speed = (current_bytes.saturating_sub(last_bytes)) as f64 / elapsed.as_secs_f64();
-                        last_bytes = current_bytes;
-                        last_time = Instant::now();
+                    let queue_is_empty = {
+                        let q = context.queue.lock().await;
+                        q.is_empty()
+                    };
 
-                        let queue_is_empty = {
-                            let q = context.queue.lock().await;
-                            q.is_empty()
-                        };
-
-                        if !queue_is_empty {
-                            match last_speed {
-                                None => {
-                                    last_speed = Some(current_speed);
-                                    if current_worker_count < max_workers {
-                                        let increase = 2.min(max_workers - current_worker_count);
-                                        if increase > 0 {
-                                            tracing::info!(
-                                                "Dynamic worker scaling: Initial speed {:.2} MiB/s with {} workers. Increasing to {}.",
-                                                current_speed / (1024.0 * 1024.0),
-                                                current_worker_count,
-                                                current_worker_count + increase
-                                            );
-                                            for _ in 0..increase {
-                                                let id = next_worker_id;
-                                                next_worker_id += 1;
-                                                let worker_context = context.clone();
-                                                workers.spawn(async move { run_worker(id, worker_context).await });
-                                            }
-                                            current_worker_count += increase;
-                                        }
-                                    }
+                    if let Some(action) = scaler.update(current_bytes, queue_is_empty) {
+                        match action {
+                            ScalerAction::ScaleUp { count, start_id } => {
+                                for i in 0..count {
+                                    let id = start_id + i;
+                                    let worker_context = context.clone();
+                                    workers.spawn(async move { run_worker(id, worker_context).await });
                                 }
-                                Some(prev_speed) => {
-                                    if prev_speed > 0.0 {
-                                        let improvement = (current_speed - prev_speed) / prev_speed;
-                                        if improvement >= 0.08 {
-                                            tracing::info!(
-                                                "Dynamic worker scaling: Speed improved by {:.1}% ({:.2} MiB/s -> {:.2} MiB/s) with {} workers.",
-                                                improvement * 100.0,
-                                                prev_speed / (1024.0 * 1024.0),
-                                                current_speed / (1024.0 * 1024.0),
-                                                current_worker_count
-                                            );
-                                            last_speed = Some(current_speed);
-                                            consecutive_no_improvement = 0;
-
-                                            if current_worker_count < max_workers {
-                                                let increase = 2.min(max_workers - current_worker_count);
-                                                if increase > 0 {
-                                                    tracing::info!("Scaling up worker count to {}.", current_worker_count + increase);
-                                                    for _ in 0..increase {
-                                                        let id = next_worker_id;
-                                                        next_worker_id += 1;
-                                                        let worker_context = context.clone();
-                                                        workers.spawn(async move { run_worker(id, worker_context).await });
-                                                    }
-                                                    current_worker_count += increase;
-                                                }
-                                            }
-                                        } else {
-                                            consecutive_no_improvement += 1;
-                                            tracing::info!(
-                                                "Dynamic worker scaling: Speed change was {:.1}% ({:.2} MiB/s -> {:.2} MiB/s) with {} workers.",
-                                                improvement * 100.0,
-                                                prev_speed / (1024.0 * 1024.0),
-                                                current_speed / (1024.0 * 1024.0),
-                                                current_worker_count
-                                            );
-
-                                            if consecutive_no_improvement == 1 {
-                                                let decrease = 2.min(current_worker_count.saturating_sub(min_workers));
-                                                if decrease > 0 {
-                                                    tracing::info!("Scaling back down to {} workers to prevent congestion.", current_worker_count - decrease);
-                                                    extra_workers_to_stop.fetch_add(decrease, Ordering::SeqCst);
-                                                    current_worker_count -= decrease;
-                                                    last_speed = None;
-                                                }
-                                            } else {
-                                                tracing::info!("Dynamic worker scaling: Speed stabilized with {} workers.", current_worker_count);
-                                            }
-                                        }
-                                    } else {
-                                        last_speed = Some(current_speed);
-                                    }
-                                }
+                            }
+                            ScalerAction::ScaleDown { count } => {
+                                extra_workers_to_stop.fetch_add(count, Ordering::SeqCst);
                             }
                         }
                     }
@@ -1132,14 +1173,7 @@ fn parse_content_range_total(value: Option<&reqwest::header::HeaderValue>) -> Op
 }
 
 fn get_jitter_ms() -> u64 {
-    use std::time::SystemTime;
-    let now = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    let seed = now as u64;
-    let next = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
-    next % 500 // up to 500ms of jitter
+    fastrand::u64(0..500)
 }
 
 fn is_error_retryable(error: &DlError) -> bool {
