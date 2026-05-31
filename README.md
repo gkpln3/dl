@@ -11,6 +11,7 @@ A lightweight, high-performance CLI downloader and accelerator written in Rust. 
 
 - **⚡ HTTP/HTTPS Download Acceleration**: Downloads files using concurrent range requests split into multiple chunks, dramatically speeding up HTTP/HTTPS transfers.
 - **📈 Dynamic & Adaptive Worker Scaling**: Automatically optimizes the number of concurrent connections when not specified. It starts with a base set of workers and progressively increases or decreases the count based on real-time speed feedback, maximizing bandwidth while avoiding congestion or rate limits.
+- **🌐 Dynamic Protocol Negotiation & Connection Multiplexing**: Native support for **ALPN protocol negotiation** and advanced stream-level connection multiplexing via **HTTP/2** with adaptive flow control, drastically reducing handshake overhead.
 - **🧲 BitTorrent & Magnet Link Support**: Seamlessly downloads torrents or magnet links.
 - **📂 Interactive File Selection**: For multi-file torrents, `dl` interactively prompts you to choose which specific files you want to download.
 - **⏯️ Resumable Streams**: Automatically saves transfer state so you can pause and resume downloads without losing progress.
@@ -52,13 +53,33 @@ This compiles `dl` in release mode and installs the executable directly to your 
 
 ## Performance Comparison ⚡
 
-To put `dl`'s multi-threaded acceleration into perspective, here is a relative speed comparison of downloading a large file (Ubuntu 26.04 Desktop ISO) using **wget** (single-threaded), [**pget**](https://github.com/Code-Hex/pget) (multi-threaded concurrent downloader), and **dl** (this utility):
+### Benchmark Results: Ubuntu 26.04 Desktop ISO (6.5 GB)
+File Size: 6.07 GiB
 
-| Utility | Connection Model | Relative Speed (Higher is Better) | Performance Gain vs Wget |
-| :--- | :--- | :---: | :---: |
-| **wget** | Single-threaded | **100%** (22.4 MiB/s) | Baseline |
-| [**pget**](https://github.com/Code-Hex/pget) | Concurrent | **54%** (12.1 MiB/s) | -46% (Slower) |
-| **dl** | **Concurrent Chunked / Range-based** | **133%** (29.8 MiB/s) | **+33% (Faster)** |
+URL: https://releases.ubuntu.com/26.04/ubuntu-26.04-desktop-amd64.iso
+
+| Downloader       | Connections | Downloaded | Duration | Avg Speed   | Relative Speed | Performance Gain    |
+| ---------------- | :---------: | :--------: | :------: | :---------: | :------------: | :-----------------: |
+| **wget**         | 1           | 974.19 MiB | 60.1s    | 16.21 MiB/s | 100.0%         | Baseline            |
+| **axel**         | 8           | 1.09 GiB   | 60.0s    | 18.64 MiB/s | 115.0%         | **+15.0% (1.15x)**  |
+| **axel**         | 16          | 1.46 GiB   | 60.0s    | 24.85 MiB/s | 153.3%         | **+53.3% (1.53x)**  |
+| **dl**           | 8           | 1.75 GiB   | 60.1s    | 29.84 MiB/s | 184.0%         | **+84.0% (1.84x)**  |
+| **dl**           | 16          | 2.69 GiB   | 60.1s    | 45.86 MiB/s | 282.9%         | **+182.9% (2.83x)** |
+| **dl (dynamic)** | Auto        | 1.69 GiB   | 60.0s    | 28.83 MiB/s | 177.8%         | **+77.8% (1.78x)**  |
+
+### Benchmark Results: iPhone 18,2 iOS 26.5 Restore IPSW (11.3 GB)
+File Size: 10.53 GiB
+
+URL: https://updates.cdn-apple.com/2026SpringFCS/fullrestores/122-56404/B6269659-BD71-4CB7-AF7C-F8D9C3CC6E2D/iPhone18,2_26.5_23F77_Restore.ipsw
+
+| Downloader       | Connections | Downloaded | Duration | Avg Speed   | Relative Speed | Performance Gain   |
+| ---------------- | :---------: | :--------: | :------: | :---------: | :------------: | :----------------: |
+| **wget**         | 1           | 1.46 GiB   | 60.1s    | 24.93 MiB/s | 100.0%         | Baseline           |
+| **axel**         | 8           | 2.11 GiB   | 60.0s    | 35.91 MiB/s | 144.1%         | **+44.1% (1.44x)** |
+| **axel**         | 16          | 862.46 MiB | 60.0s    | 14.37 MiB/s | 57.6%          | -42.4% (0.58x)     |
+| **dl**           | 8           | 2.65 GiB   | 60.1s    | 45.16 MiB/s | 181.2%         | **+81.2% (1.81x)** |
+| **dl**           | 16          | 2.16 GiB   | 60.0s    | 36.86 MiB/s | 147.9%         | **+47.9% (1.48x)** |
+| **dl (dynamic)** | Auto        | 2.48 GiB   | 60.0s    | 42.29 MiB/s | 169.7%         | **+69.7% (1.70x)** |
 
 `dl`'s range-based concurrent request scheduling optimizes bandwidth utilization, letting you pull down assets substantially faster than traditional single-threaded utilities or poorly-optimized concurrent utilities.
 
@@ -102,6 +123,44 @@ dl "magnet:?xt=urn:btih:..."
 #### 4. Downloading via `.torrent` File
 ```bash
 dl ./ubuntu-desktop.torrent
+```
+
+## Benchmarking 📊
+
+You can benchmark `dl` against `wget` and `axel` using the provided `benchmark.py` script in the root directory. The script compiles `dl` in release mode, runs each download utility inside a pseudo-terminal (to capture active progress updates), measures their average transfer speed over a set duration.
+
+### Prerequisites
+
+Make sure you have `wget` and `axel` installed on your system (e.g., via Homebrew on macOS):
+
+```bash
+brew install wget axel
+```
+
+### Running the Benchmark
+
+To run a timed benchmark (by default, 30 seconds per downloader configuration) on the default Ubuntu desktop and Apple restore IPSW files:
+
+```bash
+./benchmark.py --duration 30
+```
+
+You can customize the connection counts to test:
+
+```bash
+./benchmark.py --duration 30 --connections 8,16,32
+```
+
+To run a full download benchmark (Warning: these files are 6.5 GB and 11.3 GB, respectively!):
+
+```bash
+./benchmark.py --full
+```
+
+For more options (like benchmarking a custom URL), run:
+
+```bash
+./benchmark.py --help
 ```
 
 ## License
