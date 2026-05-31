@@ -79,7 +79,7 @@ pub async fn download_http(
         .connect_timeout(Duration::from_secs(10))
         .read_timeout(Duration::from_secs(30))
         .tcp_nodelay(true)
-        .http1_only()
+        .http2_adaptive_window(true)
         .build()?;
 
     emit_progress(
